@@ -7,7 +7,7 @@ import random
 
 # --- SEUS DADOS ---
 MQTT_BROKER = "a15a109cb36c4a1599f7c5bf4349f1f7.s1.eu.hivemq.cloud"
-# Usando porta 8883 (TCP padrão) pois o Cloud permite
+# Usando porta 8883 (TCP padrão) pois o Cloud permite e é mais estável
 MQTT_PORT = 8883 
 MQTT_USER = "esp32_loja"
 MQTT_PASSWORD = "JJunco@2026" 
@@ -58,8 +58,10 @@ def conectar_mqtt():
     
     # Tenta criar cliente (Compatibilidade v1/v2)
     try:
+        # Tenta modo legado primeiro
         client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, client_id, transport="tcp")
     except AttributeError:
+        # Se falhar, usa modo padrão
         client = mqtt.Client(client_id, transport="tcp")
     
     client.username_pw_set(MQTT_USER, MQTT_PASSWORD)

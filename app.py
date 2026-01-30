@@ -7,8 +7,8 @@ import random
 
 # --- SEUS DADOS ---
 MQTT_BROKER = "a15a109cb36c4a1599f7c5bf4349f1f7.s1.eu.hivemq.cloud"
-# Usando porta 8883 (TCP padrão) pois o Cloud permite e é mais estável
-MQTT_PORT = 8883 
+# MUDANÇA: Porta 8884 (Websockets) - Mais robusta para nuvem
+MQTT_PORT = 8884 
 MQTT_USER = "esp32_loja"
 MQTT_PASSWORD = "JJunco@2026" 
 TOPIC = "loja/radar1"
@@ -21,23 +21,22 @@ st.title("📡 Monitoramento de Fluxo - Tempo Real")
 st.sidebar.header("🔧 Status do Sistema")
 status_text = st.sidebar.empty()
 
-# --- VARIÁVEIS DE ESTADO (MEMÓRIA) ---
+# --- VARIÁVEIS DE ESTADO ---
 if 'last_x' not in st.session_state: st.session_state['last_x'] = 0
 if 'last_y' not in st.session_state: st.session_state['last_y'] = 0
 if 'conn_status' not in st.session_state: st.session_state['conn_status'] = "Iniciando..."
 
-# --- FUNÇÕES MQTT (CALLBACKS) ---
+# --- FUNÇÕES MQTT ---
 def on_message(client, userdata, message):
     try:
         payload = message.payload.decode("utf-8")
         dados = json.loads(payload)
-        # Atualiza a memória do site com os novos dados
         st.session_state['last_x'] = dados['x']
         st.session_state['last_y'] = dados['y']
     except Exception as e:
         print(f"Erro JSON: {e}")
 
-def on_connect(client, userdata, flags, rc):
+def on_connect(client, userdata, flags, rc, properties=None):
     msgs = {
         0: "Conectado com Sucesso! 🟢",
         1: "Erro de Protocolo",
@@ -47,26 +46,26 @@ def on_connect(client, userdata, flags, rc):
     }
     status = msgs.get(rc, f"Código: {rc}")
     st.session_state['conn_status'] = status
-    
     if rc == 0:
         client.subscribe(TOPIC)
 
-# --- INICIALIZAÇÃO DA CONEXÃO ---
-# REMOVIDO O @st.cache_resource para evitar o erro CacheReplayClosureError
+# --- CONEXÃO WEBSOCKETS (A Chave do Sucesso) ---
 def conectar_mqtt():
     client_id = f"dashboard-cloud-{random.randint(0, 10000)}"
     
-    # Tenta criar cliente (Compatibilidade v1/v2)
+    # 1. Define transporte como WEBSOCKETS
+    # Tenta usar a versão nova, se falhar usa a antiga
     try:
-        # Tenta modo legado primeiro
-        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, client_id, transport="tcp")
+        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, client_id, transport="websockets")
     except AttributeError:
-        # Se falhar, usa modo padrão
-        client = mqtt.Client(client_id, transport="tcp")
+        client = mqtt.Client(client_id, transport="websockets")
+    
+    # 2. Configura o caminho (Obrigatório para HiveMQ)
+    client.ws_set_options(path="/mqtt")
     
     client.username_pw_set(MQTT_USER, MQTT_PASSWORD)
     
-    # Segurança SSL Obrigatória para HiveMQ
+    # 3. Segurança SSL (Obrigatório)
     client.tls_set(cert_reqs=ssl.CERT_NONE)
     client.tls_insecure_set(True)
     
@@ -75,14 +74,13 @@ def conectar_mqtt():
     
     try:
         client.connect(MQTT_BROKER, MQTT_PORT, 60)
-        client.loop_start() # Inicia a thread em segundo plano
+        client.loop_start()
         return client
     except Exception as e:
         st.session_state['conn_status'] = f"Erro Rede: {e}"
         return None
 
-# --- LÓGICA DE SESSÃO ÚNICA ---
-# Verifica se já existe um cliente rodando na sessão. Se não, cria um.
+# --- INICIA APENAS UMA VEZ ---
 if 'mqtt_client_obj' not in st.session_state:
     st.session_state['mqtt_client_obj'] = conectar_mqtt()
 
@@ -91,13 +89,11 @@ col1, col2, col3 = st.columns(3)
 kpi_status = col1.empty()
 kpi_dist = col2.empty()
 kpi_lat = col3.empty()
-
 msg_area = st.empty()
 bar_area = st.empty()
 
-# Loop principal de atualização da tela
 while True:
-    # 1. Atualiza Status
+    # Atualiza Status
     status = st.session_state['conn_status']
     status_text.text(status)
     
@@ -108,15 +104,13 @@ while True:
     else:
         kpi_status.metric("Sistema", "🟡 Conectando...")
 
-    # 2. Pega dados
+    # Atualiza Dados
     x = st.session_state['last_x']
     y = st.session_state['last_y']
     
-    # 3. Atualiza métricas
     kpi_dist.metric("Profundidade", f"{y} cm")
     kpi_lat.metric("Lateral", f"{x} cm")
     
-    # 4. Visualização
     if y > 0:
         msg_area.success(f"📍 CLIENTE EM: X={x} / Y={y}")
         progresso = 1.0 - (min(y, 400) / 400.0)
